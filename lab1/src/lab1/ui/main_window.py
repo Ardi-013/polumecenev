@@ -55,7 +55,7 @@ class MainWindow(QMainWindow):
         self.send_spinner.setRange(0, 0)
         self.send_spinner.setFixedSize(200, 4)
         self.send_spinner.setTextVisible(False)
-        
+
         h_layout.addStretch()
         h_layout.addWidget(self.send_spinner)
         h_layout.addStretch()
@@ -72,15 +72,43 @@ class MainWindow(QMainWindow):
         central = self.create_page_central()
         layout = self.create_layout(central)
 
-        label = QLabel("Страница получения данных")
-        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(label)
+        label = QLabel("Ожидаем...")
+        label.setStyleSheet("font-size: 18px; font-weight: bold;")
+
+        self.receive_simulate = self.create_button("Получить (тест)", self._on_click)
+        self.receive_cancel = self.create_button("Назад", self._on_click)
+
+        layout.addWidget(label, alignment=Qt.AlignmentFlag.AlignHCenter)
+        layout.addWidget(self.receive_simulate, alignment=Qt.AlignmentFlag.AlignHCenter)
+        layout.addWidget(self.receive_cancel, alignment=Qt.AlignmentFlag.AlignHCenter)
+
+    def receiving_page(self):
+        central = self.create_page_central()
+        layout = self.create_layout(central)
+
+        h_layout = QHBoxLayout()
+        self.receive_spinner = QProgressBar()
+        self.receive_spinner.setRange(0, 0)
+        self.receive_spinner.setFixedSize(200, 4)
+        self.receive_spinner.setTextVisible(False)
+
+        h_layout.addStretch()
+        h_layout.addWidget(self.receive_spinner)
+        h_layout.addStretch()
+
+        label = QLabel("Получение...")
+        label.setStyleSheet("font-size: 16px; font-weight: bold;")
+        self.receive_abort = self.create_button("Отмена", self._on_click)
+
+        layout.addLayout(h_layout)
+        layout.addWidget(label, alignment=Qt.AlignmentFlag.AlignHCenter)
+        layout.addWidget(self.receive_abort, alignment=Qt.AlignmentFlag.AlignHCenter)
 
     def create_page_central(self):
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         return central_widget
-    
+
     def create_button(self, text, callback):
         button = QPushButton(text)
         button.setFixedSize(140, 36)
@@ -102,7 +130,14 @@ class MainWindow(QMainWindow):
             self.send_page()
         elif sender == self.receive:
             self.receive_page()
-        elif sender == self.send_confirm:
+        elif sender == getattr(self, "send_confirm", None):
             self.sending_page()
-        elif sender == self.send_cancel or sender == getattr(self, "send_abort", None):
+        elif sender == getattr(self, "receive_simulate", None):
+            self.receiving_page()
+        elif sender in (
+            getattr(self, "send_cancel", None),
+            getattr(self, "send_abort", None),
+            getattr(self, "receive_cancel", None),
+            getattr(self, "receive_abort", None),
+        ):
             self.main_page()
