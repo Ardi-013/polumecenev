@@ -62,10 +62,12 @@ class MainWindow(QMainWindow):
 
         label = QLabel("Отправка...")
         label.setStyleSheet("font-size: 16px; font-weight: bold;")
+        self.send_finish = self.create_button("Готово (тест)", self._on_click)
         self.send_abort = self.create_button("Отмена", self._on_click)
 
         layout.addLayout(h_layout)
         layout.addWidget(label, alignment=Qt.AlignmentFlag.AlignHCenter)
+        layout.addWidget(self.send_finish, alignment=Qt.AlignmentFlag.AlignHCenter)
         layout.addWidget(self.send_abort, alignment=Qt.AlignmentFlag.AlignHCenter)
 
     def receive_page(self):
@@ -98,11 +100,31 @@ class MainWindow(QMainWindow):
 
         label = QLabel("Получение...")
         label.setStyleSheet("font-size: 16px; font-weight: bold;")
+        self.receive_finish = self.create_button("Готово (тест)", self._on_click)
         self.receive_abort = self.create_button("Отмена", self._on_click)
 
         layout.addLayout(h_layout)
         layout.addWidget(label, alignment=Qt.AlignmentFlag.AlignHCenter)
+        layout.addWidget(self.receive_finish, alignment=Qt.AlignmentFlag.AlignHCenter)
         layout.addWidget(self.receive_abort, alignment=Qt.AlignmentFlag.AlignHCenter)
+
+    def finish_page(self):
+        central = self.create_page_central()
+        layout = self.create_layout(central)
+
+        label = QLabel("Готово!")
+        label.setStyleSheet("font-size: 18px; font-weight: bold;")
+
+        finish_image = QLabel("Изображение")
+        finish_image.setFixedSize(180, 180)
+        finish_image.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        finish_image.setStyleSheet("border: 1px solid gray;")
+        
+        self.finish_button = self.create_button("В меню", self._on_click)
+
+        layout.addWidget(label, alignment=Qt.AlignmentFlag.AlignHCenter)
+        layout.addWidget(finish_image, alignment=Qt.AlignmentFlag.AlignHCenter)
+        layout.addWidget(self.finish_button, alignment=Qt.AlignmentFlag.AlignHCenter)
 
     def create_page_central(self):
         central_widget = QWidget()
@@ -135,9 +157,15 @@ class MainWindow(QMainWindow):
         elif sender == getattr(self, "receive_simulate", None):
             self.receiving_page()
         elif sender in (
+            getattr(self, "send_finish", None),
+            getattr(self, "receive_finish", None),
+        ):
+            self.finish_page()
+        elif sender in (
             getattr(self, "send_cancel", None),
             getattr(self, "send_abort", None),
             getattr(self, "receive_cancel", None),
             getattr(self, "receive_abort", None),
+            getattr(self, "finish_button", None),
         ):
             self.main_page()
