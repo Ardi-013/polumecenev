@@ -1,5 +1,10 @@
+from pathlib import Path
+from typing import Optional
+
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QCloseEvent, QPixmap
 from PySide6.QtWidgets import (
+    QFileDialog,
     QHBoxLayout,
     QLabel,
     QMainWindow,
@@ -9,6 +14,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from lab1.audio.workers import AudioReceiverThread, AudioSenderThread
+from lab1.domain.catalog import BODIES, CelestialBody, get_body, get_images_dir, match_body_by_path
+
 
 class MainWindow(QMainWindow):
 
@@ -16,9 +24,27 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("Лабораторная 1")
         self.resize(500, 350)
+        self.current_image_path: Optional[str] = None
+        self.sender_thread: Optional[AudioSenderThread] = None
+        self.receiver_thread: Optional[AudioReceiverThread] = None
         self.main_page()
 
+    def closeEvent(self, event: QCloseEvent):
+        self._stop_threads()
+        super().closeEvent(event)
+
+    def _stop_threads(self):
+        if self.sender_thread and self.sender_thread.isRunning():
+            self.sender_thread.abort()
+            self.sender_thread.wait(400)
+            self.sender_thread = None
+        if self.receiver_thread and self.receiver_thread.isRunning():
+            self.receiver_thread.stop()
+            self.receiver_thread.wait(400)
+            self.receiver_thread = None
+
     def main_page(self):
+        self._stop_threads()
         central = self.create_page_central()
         layout = self.create_layout(central)
 
@@ -36,6 +62,12 @@ class MainWindow(QMainWindow):
         image.setFixedSize(180, 180)
         image.setAlignment(Qt.AlignmentFlag.AlignCenter)
         image.setStyleSheet("border: 1px solid gray;")
+
+        if self.current_image_path:
+            pixmap = QPixmap(self.current_image_path)
+            if not pixmap.isNull():
+                image.setPixmap(pixmap.scaled(180, 180, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+
         layout.addWidget(image)
 
         buttons_layout = self.create_layout()
@@ -47,6 +79,7 @@ class MainWindow(QMainWindow):
         layout.addLayout(buttons_layout)
 
     def sending_page(self):
+        self._stop_threads()
         central = self.create_page_central()
         layout = self.create_layout(central)
 
@@ -70,7 +103,14 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.send_finish, alignment=Qt.AlignmentFlag.AlignHCenter)
         layout.addWidget(self.send_abort, alignment=Qt.AlignmentFlag.AlignHCenter)
 
+        # Start audio transmission
+        body = match_body_by_path(self.current_image_path or "") or next(iter(BODIES.values()))
+        self.sender_thread = AudioSenderThread(image_id=body.id, parent=self)
+        self.sender_thread.finished.connect(self.finish_page)
+        self.sender_thread.start()
+
     def receive_page(self):
+        self._stop_threads()
         central = self.create_page_central()
         layout = self.create_layout(central)
 
@@ -83,6 +123,16 @@ class MainWindow(QMainWindow):
         layout.addWidget(label, alignment=Qt.AlignmentFlag.AlignHCenter)
         layout.addWidget(self.receive_simulate, alignment=Qt.AlignmentFlag.AlignHCenter)
         layout.addWidget(self.receive_cancel, alignment=Qt.AlignmentFlag.AlignHCenter)
+
+        # Start audio listening in background
+        self.receiver_thread = AudioReceiverThread(parent=self)
+        self.receiver_thread.received.connect(self._on_received)
+        self.receiver_thread.start()
+
+    def _on_received(self, image_id: str):
+        body = get_body(image_id) or next(iter(BODIES.values()))
+        self.current_image_path = str(body.file_path)
+        self.finish_page()
 
     def receiving_page(self):
         central = self.create_page_central()
@@ -109,6 +159,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.receive_abort, alignment=Qt.AlignmentFlag.AlignHCenter)
 
     def finish_page(self):
+        self._stop_threads()
         central = self.create_page_central()
         layout = self.create_layout(central)
 
@@ -119,7 +170,12 @@ class MainWindow(QMainWindow):
         finish_image.setFixedSize(180, 180)
         finish_image.setAlignment(Qt.AlignmentFlag.AlignCenter)
         finish_image.setStyleSheet("border: 1px solid gray;")
-        
+
+        if self.current_image_path:
+            pixmap = QPixmap(self.current_image_path)
+            if not pixmap.isNull():
+                finish_image.setPixmap(pixmap.scaled(180, 180, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+
         self.finish_button = self.create_button("В меню", self._on_click)
 
         layout.addWidget(label, alignment=Qt.AlignmentFlag.AlignHCenter)
@@ -149,12 +205,20 @@ class MainWindow(QMainWindow):
     def _on_click(self):
         sender = self.sender()
         if sender == self.send:
-            self.send_page()
+            images_dir = str(get_images_dir())
+            file_path, _ = QFileDialog.getOpenFileName(
+                self, "Выберите файл", images_dir, "Изображения (*.png *.jpg *.jpeg *.bmp);;Все файлы (*)"
+            )
+            if file_path:
+                self.current_image_path = file_path
+                self.send_page()
         elif sender == self.receive:
             self.receive_page()
         elif sender == getattr(self, "send_confirm", None):
             self.sending_page()
         elif sender == getattr(self, "receive_simulate", None):
+            body = next(iter(BODIES.values()))
+            self.current_image_path = str(body.file_path)
             self.receiving_page()
         elif sender in (
             getattr(self, "send_finish", None),
