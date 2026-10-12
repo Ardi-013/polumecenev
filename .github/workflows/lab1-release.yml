@@ -1,0 +1,89 @@
+name: "Lab 1: Release Build"
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version override (leave empty to use version from lab1/pyproject.toml)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    name: Build Lab 1 Windows Application and Create Release
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Determine version
+        id: get_version
+        shell: pwsh
+        run: |
+          $inputVer = "${{ github.event.inputs.version }}".Trim()
+          if ($inputVer -ne "") {
+            $ver = $inputVer.TrimStart("v").Replace("lab1-", "")
+          } else {
+            $content = Get-Content -Raw lab1/pyproject.toml
+            if ($content -match 'version\s*=\s*"(.*?)"') {
+              $ver = $matches[1]
+            } else {
+              Write-Error "Could not parse version from lab1/pyproject.toml"
+              exit 1
+            }
+          }
+          Write-Host "Resolved release version: $ver"
+          "version=$ver" >> $env:GITHUB_OUTPUT
+          "tag=lab1-v$ver" >> $env:GITHUB_OUTPUT
+
+      - name: Extract Release Notes from lab1/CHANGELOG.md
+        id: changelog
+        shell: pwsh
+        run: |
+          $ver = "${{ steps.get_version.outputs.version }}"
+          python lab1/scripts/extract_release_notes.py $ver lab1/CHANGELOG.md release_notes.md
+          Get-Content release_notes.md
+
+      - name: Install dependencies
+        working-directory: lab1
+        run: |
+          uv pip install --system "numpy>=2.0.0" "pyside6>=6.8.0" "sounddevice>=0.5.0" pyinstaller
+
+      - name: Build executable with PyInstaller
+        working-directory: lab1
+        shell: pwsh
+        run: |
+          pyinstaller --clean --noconfirm lab1.spec
+
+      - name: Archive build artifacts
+        shell: pwsh
+        run: |
+          $ver = "${{ steps.get_version.outputs.version }}"
+          $zipName = "lab1-v${ver}-windows-x64.zip"
+          Compress-Archive -Path "lab1/dist/lab1/*" -DestinationPath $zipName
+          "zip_name=$zipName" >> $env:GITHUB_OUTPUT
+        id: archive
+
+      - name: Create or Update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.get_version.outputs.tag }}
+          name: "Lab 1 Release v${{ steps.get_version.outputs.version }}"
+          body_path: release_notes.md
+          files: ${{ steps.archive.outputs.zip_name }}
+          draft: false
+          prerelease: false
