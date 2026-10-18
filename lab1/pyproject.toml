@@ -6,7 +6,7 @@ readme = "README.md"
 authors = [
     { name = "Di", email = "diana07.ko@gmail.com" }
 ]
-requires-python = ">=3.14"
+requires-python = ">=3.12"
 dependencies = [
     "brotli>=1.2.0",
     "ggwave>=0.4.3",

@@ -3,10 +3,7 @@ from pathlib import Path
 
 block_cipher = None
 
-# assets/images must be included alongside the executable
-datas = [
-    ('src/lab1/assets/images', 'lab1/assets/images'),
-]
+datas = []
 
 a = Analysis(
     ['src/lab1/main.py'],
@@ -14,6 +11,8 @@ a = Analysis(
     binaries=[],
     datas=datas,
     hiddenimports=[
+        'brotli',
+        'ggwave',
         'numpy',
         'sounddevice',
         'PySide6',

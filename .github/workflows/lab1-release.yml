@@ -61,7 +61,7 @@ jobs:
       - name: Install dependencies
         working-directory: lab1
         run: |
-          uv pip install --system "numpy>=2.0.0" "pyside6>=6.8.0" "sounddevice>=0.5.0" pyinstaller
+          uv pip install --system -e . pyinstaller
 
       - name: Build executable with PyInstaller
         working-directory: lab1
