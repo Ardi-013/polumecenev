@@ -95,15 +95,12 @@ class MainWindow(QMainWindow):
 
         label = QLabel("Отправка...")
         label.setStyleSheet("font-size: 16px; font-weight: bold;")
-        self.send_finish = self.create_button("Готово (тест)", self._on_click)
         self.send_abort = self.create_button("Отмена", self._on_click)
 
         layout.addLayout(h_layout)
         layout.addWidget(label, alignment=Qt.AlignmentFlag.AlignHCenter)
-        layout.addWidget(self.send_finish, alignment=Qt.AlignmentFlag.AlignHCenter)
         layout.addWidget(self.send_abort, alignment=Qt.AlignmentFlag.AlignHCenter)
 
-        # Start audio transmission
         body = match_body_by_path(self.current_image_path or "") or next(iter(BODIES.values()))
         self.sender_thread = AudioSenderThread(image_id=body.id, parent=self)
         self.sender_thread.finished.connect(self.finish_page)
@@ -117,14 +114,11 @@ class MainWindow(QMainWindow):
         label = QLabel("Ожидаем...")
         label.setStyleSheet("font-size: 18px; font-weight: bold;")
 
-        self.receive_simulate = self.create_button("Получить (тест)", self._on_click)
         self.receive_cancel = self.create_button("Назад", self._on_click)
 
         layout.addWidget(label, alignment=Qt.AlignmentFlag.AlignHCenter)
-        layout.addWidget(self.receive_simulate, alignment=Qt.AlignmentFlag.AlignHCenter)
         layout.addWidget(self.receive_cancel, alignment=Qt.AlignmentFlag.AlignHCenter)
 
-        # Start audio listening in background
         self.receiver_thread = AudioReceiverThread(parent=self)
         self.receiver_thread.received.connect(self._on_received)
         self.receiver_thread.start()
@@ -150,12 +144,10 @@ class MainWindow(QMainWindow):
 
         label = QLabel("Получение...")
         label.setStyleSheet("font-size: 16px; font-weight: bold;")
-        self.receive_finish = self.create_button("Готово (тест)", self._on_click)
         self.receive_abort = self.create_button("Отмена", self._on_click)
 
         layout.addLayout(h_layout)
         layout.addWidget(label, alignment=Qt.AlignmentFlag.AlignHCenter)
-        layout.addWidget(self.receive_finish, alignment=Qt.AlignmentFlag.AlignHCenter)
         layout.addWidget(self.receive_abort, alignment=Qt.AlignmentFlag.AlignHCenter)
 
     def finish_page(self):
@@ -216,15 +208,6 @@ class MainWindow(QMainWindow):
             self.receive_page()
         elif sender == getattr(self, "send_confirm", None):
             self.sending_page()
-        elif sender == getattr(self, "receive_simulate", None):
-            body = next(iter(BODIES.values()))
-            self.current_image_path = str(body.file_path)
-            self.receiving_page()
-        elif sender in (
-            getattr(self, "send_finish", None),
-            getattr(self, "receive_finish", None),
-        ):
-            self.finish_page()
         elif sender in (
             getattr(self, "send_cancel", None),
             getattr(self, "send_abort", None),
