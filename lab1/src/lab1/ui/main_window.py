@@ -23,11 +23,131 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Лабораторная 1")
-        self.resize(500, 350)
+        self.resize(520, 380)
         self.current_image_path: Optional[str] = None
         self.sender_thread: Optional[AudioSenderThread] = None
         self.receiver_thread: Optional[AudioReceiverThread] = None
+
+        self.current_theme = "purple"
+        self.apply_theme()
         self.main_page()
+
+    def apply_theme(self):
+        if self.current_theme == "purple":
+            self.setStyleSheet("""
+                QMainWindow {
+                    background-color: #120e1e;
+                }
+                QLabel {
+                    color: #ede7f6;
+                    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+                }
+                QPushButton {
+                    background-color: #2e1f47;
+                    color: #f3e8ff;
+                    border: 1px solid #5b3e8c;
+                    border-radius: 9px;
+                    font-size: 13px;
+                    font-weight: 600;
+                    padding: 4px 10px;
+                }
+                QPushButton:hover {
+                    background-color: #432c69;
+                    border-color: #8b5cf6;
+                    color: #ffffff;
+                }
+                QPushButton:pressed {
+                    background-color: #201435;
+                }
+                QProgressBar {
+                    background-color: #231738;
+                    border: none;
+                    border-radius: 2px;
+                }
+                QProgressBar::chunk {
+                    background-color: #a855f7;
+                    border-radius: 2px;
+                }
+            """)
+        else:
+            self.setStyleSheet("""
+                QMainWindow {
+                    background-color: #fff1f5;
+                }
+                QLabel {
+                    color: #4c1d36;
+                    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+                }
+                QPushButton {
+                    background-color: #fce7f3;
+                    color: #831843;
+                    border: 1px solid #f472b6;
+                    border-radius: 9px;
+                    font-size: 13px;
+                    font-weight: 600;
+                    padding: 4px 10px;
+                }
+                QPushButton:hover {
+                    background-color: #fbcfe8;
+                    border-color: #ec4899;
+                    color: #701a75;
+                }
+                QPushButton:pressed {
+                    background-color: #f472b6;
+                    color: #ffffff;
+                }
+                QProgressBar {
+                    background-color: #fbcfe8;
+                    border: none;
+                    border-radius: 2px;
+                }
+                QProgressBar::chunk {
+                    background-color: #ec4899;
+                    border-radius: 2px;
+                }
+            """)
+
+    def style_accent_button(self, button: QPushButton):
+        if self.current_theme == "purple":
+            button.setStyleSheet("""
+                QPushButton {
+                    background-color: #6d28d9;
+                    border: 1px solid #8b5cf6;
+                    color: #ffffff;
+                }
+                QPushButton:hover {
+                    background-color: #7c3aed;
+                }
+            """)
+        else:
+            button.setStyleSheet("""
+                QPushButton {
+                    background-color: #ec4899;
+                    border: 1px solid #f43f5e;
+                    color: #ffffff;
+                }
+                QPushButton:hover {
+                    background-color: #db2777;
+                }
+            """)
+
+    def style_image_frame(self, label: QLabel):
+        if self.current_theme == "purple":
+            label.setStyleSheet("""
+                border: 2px dashed #5b3e8c;
+                border-radius: 12px;
+                background-color: #1a142b;
+                color: #9d8db8;
+                font-size: 13px;
+            """)
+        else:
+            label.setStyleSheet("""
+                border: 2px dashed #f472b6;
+                border-radius: 12px;
+                background-color: #ffffff;
+                color: #9d4c6c;
+                font-size: 13px;
+            """)
 
     def closeEvent(self, event: QCloseEvent):
         self._stop_threads()
@@ -50,9 +170,15 @@ class MainWindow(QMainWindow):
 
         self.send = self.create_button("Отправить", self._on_click)
         self.receive = self.create_button("Получить", self._on_click)
+        self.style_accent_button(self.send)
+
+        theme_title = "🌸 Розовая тема" if self.current_theme == "purple" else "🌙 Фиолетовая тема"
+        self.theme_btn = self.create_button(theme_title, self._on_click)
+        self.theme_btn.setFixedSize(160, 36)
 
         layout.addWidget(self.send, alignment=Qt.AlignmentFlag.AlignHCenter)
         layout.addWidget(self.receive, alignment=Qt.AlignmentFlag.AlignHCenter)
+        layout.addWidget(self.theme_btn, alignment=Qt.AlignmentFlag.AlignHCenter)
 
     def send_page(self):
         central = self.create_page_central()
@@ -61,18 +187,26 @@ class MainWindow(QMainWindow):
         image = QLabel("Изображение")
         image.setFixedSize(180, 180)
         image.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        image.setStyleSheet("border: 1px solid gray;")
+        self.style_image_frame(image)
 
         if self.current_image_path:
             pixmap = QPixmap(self.current_image_path)
             if not pixmap.isNull():
-                image.setPixmap(pixmap.scaled(180, 180, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+                image.setPixmap(
+                    pixmap.scaled(
+                        180, 180,
+                        Qt.AspectRatioMode.KeepAspectRatio,
+                        Qt.TransformationMode.SmoothTransformation,
+                    )
+                )
 
         layout.addWidget(image)
 
         buttons_layout = self.create_layout()
         self.send_confirm = self.create_button("Отправить", self._on_click)
         self.send_cancel = self.create_button("Назад", self._on_click)
+        self.style_accent_button(self.send_confirm)
+
         buttons_layout.addWidget(self.send_confirm)
         buttons_layout.addWidget(self.send_cancel)
 
@@ -86,15 +220,16 @@ class MainWindow(QMainWindow):
         h_layout = QHBoxLayout()
         self.send_spinner = QProgressBar()
         self.send_spinner.setRange(0, 0)
-        self.send_spinner.setFixedSize(200, 4)
+        self.send_spinner.setFixedSize(220, 4)
         self.send_spinner.setTextVisible(False)
 
         h_layout.addStretch()
         h_layout.addWidget(self.send_spinner)
         h_layout.addStretch()
 
+        title_color = "#ede7f6" if self.current_theme == "purple" else "#4c1d36"
         label = QLabel("Отправка...")
-        label.setStyleSheet("font-size: 16px; font-weight: bold;")
+        label.setStyleSheet(f"font-size: 17px; font-weight: bold; color: {title_color};")
         self.send_abort = self.create_button("Отмена", self._on_click)
 
         layout.addLayout(h_layout)
@@ -111,8 +246,9 @@ class MainWindow(QMainWindow):
         central = self.create_page_central()
         layout = self.create_layout(central)
 
-        label = QLabel("Ожидаем...")
-        label.setStyleSheet("font-size: 18px; font-weight: bold;")
+        title_color = "#ede7f6" if self.current_theme == "purple" else "#4c1d36"
+        label = QLabel("Ожидаем сигнал...")
+        label.setStyleSheet(f"font-size: 17px; font-weight: bold; color: {title_color};")
 
         self.receive_cancel = self.create_button("Назад", self._on_click)
 
@@ -128,47 +264,33 @@ class MainWindow(QMainWindow):
         self.current_image_path = str(body.file_path)
         self.finish_page()
 
-    def receiving_page(self):
-        central = self.create_page_central()
-        layout = self.create_layout(central)
-
-        h_layout = QHBoxLayout()
-        self.receive_spinner = QProgressBar()
-        self.receive_spinner.setRange(0, 0)
-        self.receive_spinner.setFixedSize(200, 4)
-        self.receive_spinner.setTextVisible(False)
-
-        h_layout.addStretch()
-        h_layout.addWidget(self.receive_spinner)
-        h_layout.addStretch()
-
-        label = QLabel("Получение...")
-        label.setStyleSheet("font-size: 16px; font-weight: bold;")
-        self.receive_abort = self.create_button("Отмена", self._on_click)
-
-        layout.addLayout(h_layout)
-        layout.addWidget(label, alignment=Qt.AlignmentFlag.AlignHCenter)
-        layout.addWidget(self.receive_abort, alignment=Qt.AlignmentFlag.AlignHCenter)
-
     def finish_page(self):
         self._stop_threads()
         central = self.create_page_central()
         layout = self.create_layout(central)
 
+        title_color = "#c4b5fd" if self.current_theme == "purple" else "#db2777"
         label = QLabel("Готово!")
-        label.setStyleSheet("font-size: 18px; font-weight: bold;")
+        label.setStyleSheet(f"font-size: 18px; font-weight: bold; color: {title_color};")
 
         finish_image = QLabel("Изображение")
         finish_image.setFixedSize(180, 180)
         finish_image.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        finish_image.setStyleSheet("border: 1px solid gray;")
+        self.style_image_frame(finish_image)
 
         if self.current_image_path:
             pixmap = QPixmap(self.current_image_path)
             if not pixmap.isNull():
-                finish_image.setPixmap(pixmap.scaled(180, 180, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+                finish_image.setPixmap(
+                    pixmap.scaled(
+                        180, 180,
+                        Qt.AspectRatioMode.KeepAspectRatio,
+                        Qt.TransformationMode.SmoothTransformation,
+                    )
+                )
 
         self.finish_button = self.create_button("В меню", self._on_click)
+        self.style_accent_button(self.finish_button)
 
         layout.addWidget(label, alignment=Qt.AlignmentFlag.AlignHCenter)
         layout.addWidget(finish_image, alignment=Qt.AlignmentFlag.AlignHCenter)
@@ -206,13 +328,16 @@ class MainWindow(QMainWindow):
                 self.send_page()
         elif sender == self.receive:
             self.receive_page()
+        elif sender == getattr(self, "theme_btn", None):
+            self.current_theme = "pink" if self.current_theme == "purple" else "purple"
+            self.apply_theme()
+            self.main_page()
         elif sender == getattr(self, "send_confirm", None):
             self.sending_page()
         elif sender in (
             getattr(self, "send_cancel", None),
             getattr(self, "send_abort", None),
             getattr(self, "receive_cancel", None),
-            getattr(self, "receive_abort", None),
             getattr(self, "finish_button", None),
         ):
             self.main_page()
