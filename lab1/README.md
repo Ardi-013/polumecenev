@@ -1,74 +1,96 @@
-# Лабораторная работа №1: Связь двух компьютеров
+# Лабораторная работа №1: Акустическая передача файлов (Data-Over-Sound)
 
-Программа для передачи выбора картинки между двумя ноутбуками через звук (динамики и микрофон) без проводов и Wi-Fi.
+Программа для надёжной беспроводной передачи произвольных файлов любого формата (`*.*`) между компьютерами через звук (динамики и микрофон) без проводов, Wi-Fi и Bluetooth.
 
-Тема изображений: планеты и объекты из игры **Outer Wilds**.
+Система устойчива к комнатным акустическим помехам и реверберации, использует сжатие данных **Brotli**, помехоустойчивые коды **Рида-Соломона (ggwave)** и протокол подтверждения доставки **Stop-and-Wait ARQ**.
 
 ---
 
-## Каталог картинок
+## Интерфейс приложения
 
-Передавать можно выбор одной из 12 картинок:
+### 1. Главное меню и цветовые темы
+Приложение поддерживает две встроенные цветовые схемы (переключаются одной кнопкой):
 
 <table>
   <tr>
-    <td align="center"><b>1. Sun</b><br><img src="src/lab1/assets/images/sun.png" width="130" alt="Sun"><br><code>sun.png</code></td>
-    <td align="center"><b>2. Hourglass Twins</b><br><img src="src/lab1/assets/images/hourglass_twins.png" width="130" alt="Hourglass Twins"><br><code>hourglass_twins.png</code></td>
-    <td align="center"><b>3. Timber Hearth</b><br><img src="src/lab1/assets/images/timber_hearth.png" width="130" alt="Timber Hearth"><br><code>timber_hearth.png</code></td>
-    <td align="center"><b>4. Attlerock</b><br><img src="src/lab1/assets/images/attlerock.png" width="130" alt="Attlerock"><br><code>attlerock.png</code></td>
-    <td align="center"><b>5. Brittle Hollow</b><br><img src="src/lab1/assets/images/brittle_hollow.png" width="130" alt="Brittle Hollow"><br><code>brittle_hollow.png</code></td>
-    <td align="center"><b>6. Hollow's Lantern</b><br><img src="src/lab1/assets/images/hollows_lantern.png" width="130" alt="Hollow's Lantern"><br><code>hollows_lantern.png</code></td>
-  </tr>
-  <tr>
-    <td align="center"><b>7. Giant's Deep</b><br><img src="src/lab1/assets/images/giants_deep.png" width="130" alt="Giant's Deep"><br><code>giants_deep.png</code></td>
-    <td align="center"><b>8. Dark Bramble</b><br><img src="src/lab1/assets/images/dark_bramble.png" width="130" alt="Dark Bramble"><br><code>dark_bramble.png</code></td>
-    <td align="center"><b>9. Interloper</b><br><img src="src/lab1/assets/images/interloper.png" width="130" alt="Interloper"><br><code>interloper.png</code></td>
-    <td align="center"><b>0. Quantum Moon</b><br><img src="src/lab1/assets/images/quantum_moon.png" width="130" alt="Quantum Moon"><br><code>quantum_moon.png</code></td>
-    <td align="center"><b>A. White Hole</b><br><img src="src/lab1/assets/images/white_hole.png" width="130" alt="White Hole"><br><code>white_hole.png</code></td>
-    <td align="center"><b>B. The Stranger</b><br><img src="src/lab1/assets/images/the_stranger.png" width="130" alt="The Stranger"><br><code>the_stranger.png</code></td>
+    <td align="center"><b>🌙 Тёмно-фиолетовая тема (по умолчанию)</b><br><img src="docs/screenshots/01_main_menu_purple.png" width="380" alt="Фиолетовая тема"></td>
+    <td align="center"><b>🌸 Розовая тема</b><br><img src="docs/screenshots/02_main_menu_pink.png" width="380" alt="Розовая тема"></td>
   </tr>
 </table>
 
+### 2. Подготовка и отправка файла
+При выборе файла вычисляется сжатие Brotli, процент экономии и число необходимых акустических пакетов. В процессе отправки отображается прогресс и статус текущего пакета:
+
+<table>
+  <tr>
+    <td align="center"><b>Предварительный расчёт сжатия и пакетов</b><br><img src="docs/screenshots/03_send_preview.png" width="380" alt="Подготовка к отправке"></td>
+    <td align="center"><b>Процесс передачи чанков в эфир</b><br><img src="docs/screenshots/04_sending_progress.png" width="380" alt="Процесс отправки"></td>
+  </tr>
+</table>
+
+### 3. Приём и результаты передачи
+Приёмник непрерывно анализирует микрофонный вход и отсылает подтверждения `ACK`. По окончании передачи для получателя доступны кнопки прямого запуска файла и перехода в каталог сохранения:
+
+<table>
+  <tr>
+    <td align="center"><b>Прослушивание эфира (Приёмник)</b><br><img src="docs/screenshots/05_receive_listening.png" width="380" alt="Прослушивание эфира"></td>
+    <td align="center"><b>Файл успешно получен (Действия с файлом)</b><br><img src="docs/screenshots/06_finish_receiver.png" width="380" alt="Файл получен"></td>
+  </tr>
+</table>
+
+*(Также предусмотрен раздельный экран завершения для отправителя с кнопками «Показать в папке» и «В меню»).*
+
 ---
 
-## Принцип работы
+## Архитектура и стек технологий
 
-Связь построена на стандарте **DTMF** — двухчастотных тональных сигналов. Каждому символу соответствует пара частот (низкая и высокая).
+1. **Предварительное сжатие — Brotli (RFC 7932):**
+   * Использует статический словарь на 120 КБ (более 13 000 частых слов и языковых шаблонов).
+   * Обеспечивает сжатие коротких текстовых файлов в 2–2.5 раза, прямо сокращая длительность звуковой передачи.
+   * Если файл уже сжат или имеет бинарную природу, программа автоматически передаёт его без сжатия (`is_comp=False`).
 
-Передаётся идентификатор выбранной картинки:
-1. Ноутбук-передатчик воспроизводит последовательность из 3 коротких тонов:
-   * `*` (стартовый маркер, 180 мс)
-   * Код картинки (`1`–`B`, 240 мс)
-   * `#` (стоповый маркер, 180 мс)
-2. Ноутбук-приёмник непрерывно анализирует сигнал с микрофона алгоритмом Гёрцеля, выделяя эти частоты.
-3. При успешном получении кода программа сразу открывает соответствующую картинку из каталога.
+2. **Физический акустический модем — `ggwave`:**
+   * Модуляция множественным сдвигом частот (**MFSK**) в слышимой полосе 1.5–15 кГц.
+   * Символы размером `SAMPLES_PER_FRAME = 512` (~10.6 мс) обеспечивают подавление межсимвольной интерференции (ISI) от отражений звука в комнате.
+   * Аппаратная прямая коррекция ошибок **Рида-Соломона (FEC)** на уровне C-библиотеки: повреждённые шумом пакеты восстанавливаются математически.
 
-Весь сеанс длится меньше секунды (~0.7 с).
+3. **Канальный протокол — Stop-and-Wait ARQ:**
+   * Файл нарезается на чанки фиксированного размера (52 байта).
+   * Отправитель посылает пакет `DATA:seq` и ожидает ответный короткий кадр `ACK:seq` (тайм-аут 2.8 с).
+   * При акустических помехах (кашель, клики) отправитель повторяет попытку (до 6 ретрансмитов).
+   * Межкадровый защитный интервал (150 мс) позволяет угаснуть эху динамиков в помещении.
+   * Итоговая проверка целостности собранного файла по контрольной сумме **CRC32**.
+
+4. **Многопоточный GUI (PySide6 / Qt):**
+   * Работа со звуковой картой (`sounddevice`) полностью изолирована в отдельных фоновых потоках `AudioSenderThread` и `AudioReceiverThread`, благодаря чему интерфейс остаётся отзывчивым.
+   * Безопасная остановка потоков при отмене передачи без ложных срабатываний.
+   * Системная интеграция с Windows:
+     * **«Открыть файл»** — запуск через ассоциированную программу Windows (`os.startfile`).
+     * **«Показать в папке»** — открытие Проводника с выделенным файлом (`explorer /select`).
+     * Защита от перезаписи: сохраняемые файлы автоматически получают индекс (`file_1.txt`, `file_2.txt`).
 
 ---
 
 ## Запуск приложения
 
-### Вариант 1. Готовая сборка (.exe)
-Скачать архив с программой во вкладке [Releases](https://github.com/Ardi-013/polumecenev/releases), распаковать и запустить `lab1.exe` (установка Python не требуется).
-
-### Вариант 2. Запуск из исходников
-1. Установить менеджер пакетов [uv](https://docs.astral.sh/uv/).
-2. В терминале перейти в директорию `lab1` и выполнить:
+### Вариант 1. Запуск из исходников
+1. Установите современный менеджер пакетов [uv](https://docs.astral.sh/uv/).
+2. В терминале перейдите в папку `lab1` и выполните:
    ```bash
    cd lab1
    uv run lab1
    ```
+   *(Или `uv run python -m lab1.main`)*. Все необходимые зависимости (`pyside6`, `sounddevice`, `ggwave`, `brotli`, `numpy`) установятся автоматически.
+
+### Вариант 2. Запуск готового `.exe`
+Скачайте готовый архив в разделе [Releases](https://github.com/Ardi-013/polumecenev/releases), распакуйте и запустите `lab1.exe` (установка Python не требуется).
 
 ---
 
-## Сборка релиза (GitHub Actions)
+## Автоматическая сборка (CI/CD)
 
-В репозитории настроен процесс сборки `.github/workflows/lab1-release.yml`.
-
-Запуск выполняется вручную через кнопку **Run workflow** во вкладке **Actions** на GitHub:
-1. Скрипт считывает версию из `lab1/pyproject.toml`.
-2. Извлекает описание изменений из `lab1/CHANGELOG.md`.
-3. Собирает исполняемый файл под Windows с помощью PyInstaller (картинки планет включаются в сборку).
-4. Упаковывает результат в архив `lab1-v<версия>-windows-x64.zip`.
-5. Создаёт релиз в GitHub Releases с тегом `lab1-v<версия>` и прикрепляет архив.
+В репозитории настроен GitHub Actions workflow [lab1-release.yml](../.github/workflows/lab1-release.yml), собирающий автономный исполняемый файл под Windows с помощью PyInstaller:
+1. Считывает текущую версию из `pyproject.toml`.
+2. Извлекает свежие заметки релиза из `CHANGELOG.md`.
+3. Собирает бинарный дистрибутив `lab1.exe` без внешних зависимостей.
+4. Упаковывает артефакт в zip-архив и публикует релиз на GitHub.
