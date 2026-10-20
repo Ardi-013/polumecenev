@@ -11,17 +11,17 @@ SAMPLE_RATE: int = 48000
 BLOCK_SIZE: int = 1024
 SAMPLES_PER_FRAME: int = 512
 CHUNK_PAYLOAD_SIZE: int = 52
-DEFAULT_PROTOCOL_ID: int = 1  # 1: Fast (быстрый режим: ~6 сек на файл с хорошим запасом)
-DEFAULT_VOLUME: int = 75
+DEFAULT_PROTOCOL_ID: int = 2  # 1: Fast (быстрый режим: ~6 сек на файл)
+DEFAULT_VOLUME: int = 80
 DEFAULT_MARKER_THRESHOLD: float = 1.0
 
 # ==============================================================================
-# Сетевой протокол Stop-and-Wait ARQ и тайминги (Data Link / Transport Layer)
+# Сетевой протокол (NACK Selective Repeat в конце) и тайминги
 # ==============================================================================
-MAX_PACKET_RETRIES: int = 8
-ACK_TIMEOUT_SEC: float = 3.0
-RECEIVER_PRE_ACK_DELAY_SEC: float = 0.20
-RECEIVER_POST_ACK_GUARD_SEC: float = 0.10
+INTER_PACKET_GUARD_SEC: float = 0.08  # Пауза между чанками для гашения эха
+HALF_DUPLEX_GUARD_SEC: float = 0.50   # Пауза перед сменой направления передачи (комната затихает)
+RECV_RESPONSE_TIMEOUT_SEC: float = 4.5  # Ожидание ответа от приёмника
+MAX_NACK_ATTEMPTS: int = 4            # Максимум раундов досылки
 AUDIO_POLL_INTERVAL_SEC: float = 0.04
 
 # ==============================================================================
@@ -68,7 +68,8 @@ def decompress_data(data: bytes, is_compressed: bool) -> bytes:
 # Clean, reliable packet formatting:
 # START:total:orig_sz:is_comp:crc32:filename
 # DATA:seq:<binary payload>
-# ACK:seq
+# ACK:DONE
+# NACK:seq1,seq2...
 # END:total
 
 def make_start_packet(total_chunks: int, orig_size: int, is_comp: bool, file_crc32: int, filename: str) -> bytes:
@@ -80,8 +81,13 @@ def make_data_packet(seq: int, chunk: bytes) -> bytes:
     return f"DATA:{seq}:".encode("ascii") + chunk
 
 
-def make_ack_packet(seq: int) -> bytes:
-    return f"ACK:{seq}".encode("ascii")
+def make_done_packet() -> bytes:
+    return b"ACK:DONE"
+
+
+def make_nack_packet(missing_seqs: list[int]) -> bytes:
+    seq_str = ",".join(str(s) for s in missing_seqs[:20])
+    return f"NACK:{seq_str}".encode("ascii")
 
 
 def make_end_packet(total_chunks: int) -> bytes:
@@ -102,8 +108,17 @@ def parse_packet(raw: Optional[bytes]) -> Optional[Dict[str, Any]]:
     elif raw.startswith(b"ACK:"):
         try:
             parts = raw.split(b":", 1)
-            seq = int(parts[1])
-            return {"type": "ACK", "seq": seq}
+            val = parts[1].decode("ascii", errors="ignore").strip()
+            if val == "DONE":
+                return {"type": "ACK_DONE"}
+            return {"type": "ACK", "seq": int(val)}
+        except Exception:
+            return None
+    elif raw.startswith(b"NACK:"):
+        try:
+            val = raw[5:].decode("ascii", errors="ignore").strip()
+            missing = [int(p) for p in val.split(",") if p.strip().isdigit()]
+            return {"type": "NACK", "missing": missing}
         except Exception:
             return None
     elif raw.startswith(b"END:"):

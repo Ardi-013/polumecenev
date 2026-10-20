@@ -133,7 +133,7 @@ sdist = { url = "https://files.pythonhosted.org/packages/22/5a/ac1d3125e6e9aff6b
 
 [[package]]
 name = "lab1"
-version = "0.3.0"
+version = "0.4.0"
 source = { editable = "." }
 dependencies = [
     { name = "brotli" },

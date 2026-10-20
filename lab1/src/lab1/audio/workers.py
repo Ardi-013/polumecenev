@@ -1,32 +1,33 @@
 import time
 import zlib
 from pathlib import Path
-from typing import Optional
+from typing import Any, Dict, Optional
 
 import numpy as np
 import sounddevice as sd
 from PySide6.QtCore import QThread, Signal
 
 from lab1.core.protocol import (
-    ACK_TIMEOUT_SEC,
     AUDIO_POLL_INTERVAL_SEC,
     BLOCK_SIZE,
     CHUNK_PAYLOAD_SIZE,
     DEFAULT_PROTOCOL_ID,
     DEFAULT_VOLUME,
-    MAX_PACKET_RETRIES,
+    HALF_DUPLEX_GUARD_SEC,
+    INTER_PACKET_GUARD_SEC,
+    MAX_NACK_ATTEMPTS,
     RECEIVER_IDLE_DOTS_INTERVAL_TICKS,
     RECEIVER_IDLE_DOTS_MAX_COUNT,
-    RECEIVER_POST_ACK_GUARD_SEC,
-    RECEIVER_PRE_ACK_DELAY_SEC,
+    RECV_RESPONSE_TIMEOUT_SEC,
     SAMPLE_RATE,
     AudioPacketDecoder,
     compress_data,
     decompress_data,
     encode_to_audio,
-    make_ack_packet,
     make_data_packet,
+    make_done_packet,
     make_end_packet,
+    make_nack_packet,
     make_start_packet,
 )
 
@@ -70,19 +71,18 @@ class AudioSenderThread(QThread):
         sd.wait()
         return not self._is_aborted
 
-    def _wait_for_ack(
+    def _listen_for_response(
         self,
-        expected_seq: int,
-        timeout_sec: float = ACK_TIMEOUT_SEC,
-    ) -> bool:
-        """Listens for an ACK packet matching expected_seq within timeout."""
+        timeout_sec: float = RECV_RESPONSE_TIMEOUT_SEC,
+    ) -> Optional[Dict[str, Any]]:
+        """Listens for an incoming ACK:DONE or NACK packet from receiver."""
         if self._is_aborted:
-            return False
+            return None
 
         decoder = AudioPacketDecoder()
         stream = None
         start_time = time.time()
-        ack_found = False
+        response_pkt = None
 
         try:
             stream = sd.InputStream(
@@ -99,13 +99,13 @@ class AudioSenderThread(QThread):
                     break
 
                 pkt = decoder.decode_chunk(data[:, 0])
-                if pkt and pkt.get("type") == "ACK" and pkt.get("seq") == expected_seq:
-                    ack_found = True
+                if pkt and pkt.get("type") in ("ACK_DONE", "NACK"):
+                    response_pkt = pkt
                     break
 
         except Exception as exc:
             if not self._is_aborted:
-                self.error.emit(f"Ошибка микрофона при ожидании ACK: {exc}")
+                print(f"[Sender] Предупреждение микрофона: {exc}")
         finally:
             if stream is not None:
                 try:
@@ -115,7 +115,7 @@ class AudioSenderThread(QThread):
                     pass
             decoder.close()
 
-        return ack_found
+        return response_pkt
 
     def run(self):
         try:
@@ -138,65 +138,111 @@ class AudioSenderThread(QThread):
             else:
                 comp_summary = f"{orig_size} Б"
 
-            chunks = [
+            raw_chunks = [
                 compressed_data[i : i + CHUNK_PAYLOAD_SIZE]
                 for i in range(0, len(compressed_data), CHUNK_PAYLOAD_SIZE)
             ]
-            if not chunks:
-                chunks = [b""]
+            if not raw_chunks:
+                raw_chunks = [b""]
 
-            total_chunks = len(chunks)
+            total_chunks = len(raw_chunks)
+            chunk_map = {seq: chunk for seq, chunk in enumerate(raw_chunks, 1)}
 
-            # Build sequence: START (seq 0), DATA (seq 1..N), END (seq N+1)
-            packets = []
-            packets.append(
-                (0, make_start_packet(total_chunks, orig_size, is_comp, file_crc32, path.name), "заголовка")
-            )
-            for seq, chunk in enumerate(chunks, 1):
-                packets.append((seq, make_data_packet(seq, chunk), f"пакета {seq}/{total_chunks}"))
-            packets.append((total_chunks + 1, make_end_packet(total_chunks), "завершения"))
+            # Подготовка звуковых волн
+            start_pkt = make_start_packet(total_chunks, orig_size, is_comp, file_crc32, path.name)
+            start_waveform = encode_to_audio(start_pkt, protocol_id=self.protocol_id, volume=self.volume)
 
-            total_packets = len(packets)
-            max_retries = MAX_PACKET_RETRIES
+            end_pkt = make_end_packet(total_chunks)
+            end_waveform = encode_to_audio(end_pkt, protocol_id=self.protocol_id, volume=self.volume)
 
-            for pkt_idx, (seq, pkt_bytes, label) in enumerate(packets):
+            # --- Шаг 1: Отправка всех пакетов файла потоком ---
+            self.status.emit(f"Передача заголовка ({comp_summary}, {total_chunks} пак.)...")
+            self.progress.emit(0)
+
+            if not self._play_samples(start_waveform):
+                return
+            time.sleep(INTER_PACKET_GUARD_SEC)
+
+            for seq in range(1, total_chunks + 1):
                 if self._is_aborted:
                     self.status.emit("Передача отменена.")
                     return
 
-                waveform = encode_to_audio(pkt_bytes, protocol_id=self.protocol_id, volume=self.volume)
-                delivered = False
-
-                for attempt in range(1, max_retries + 1):
-                    if self._is_aborted:
-                        return
-
-                    if attempt == 1:
-                        if seq == 0:
-                            self.status.emit(f"Передача заголовка ({comp_summary}, {total_chunks} пак.)...")
-                        else:
-                            self.status.emit(f"Передача {label}...")
-                    else:
-                        self.status.emit(f"Шум: повтор {label} (попытка {attempt}/{max_retries})...")
-
-                    if not self._play_samples(waveform):
-                        return
-
-                    # Immediately open mic to catch ACK; receiver delays ACK by 0.20s to allow driver startup
-                    if self._wait_for_ack(seq, timeout_sec=ACK_TIMEOUT_SEC):
-                        delivered = True
-                        break
-
-                if not delivered:
-                    self.error.emit(f"Не удалось получить подтверждение для {label}. Проверьте микрофон.")
+                self.status.emit(f"Передача пакета {seq}/{total_chunks}...")
+                chunk_wave = encode_to_audio(
+                    make_data_packet(seq, chunk_map[seq]),
+                    protocol_id=self.protocol_id,
+                    volume=self.volume,
+                )
+                if not self._play_samples(chunk_wave):
                     return
 
-                self.progress.emit(min(100, int(((pkt_idx + 1) / total_packets) * 100)))
+                percent = min(85, int((seq / total_chunks) * 85))
+                self.progress.emit(percent)
+                time.sleep(INTER_PACKET_GUARD_SEC)
 
-            if not self._is_aborted:
-                self.status.emit("Файл успешно передан!")
-                self.progress.emit(100)
-                self.success.emit()
+            # Отправляем один пакет завершения END
+            self.status.emit("Завершение передачи (пакет END)...")
+            if not self._play_samples(end_waveform):
+                return
+
+            # --- Шаг 2: Ожидание ответа приёмника (NACK или ACK:DONE) ---
+            for attempt in range(1, MAX_NACK_ATTEMPTS + 1):
+                if self._is_aborted:
+                    return
+
+                self.status.emit(f"Ожидание ответа приёмника (проверка {attempt}/{MAX_NACK_ATTEMPTS})...")
+                self.progress.emit(85 + attempt * 3)
+
+                resp = self._listen_for_response(timeout_sec=RECV_RESPONSE_TIMEOUT_SEC)
+
+                if resp and resp.get("type") == "ACK_DONE":
+                    self.status.emit("Файл успешно передан и подтверждён приёмником!")
+                    self.progress.emit(100)
+                    self.success.emit()
+                    return
+
+                elif resp and resp.get("type") == "NACK":
+                    missing = resp.get("missing", [])
+                    if not missing:
+                        self.status.emit("Файл успешно передан и подтверждён приёмником!")
+                        self.progress.emit(100)
+                        self.success.emit()
+                        return
+
+                    self.status.emit(f"Принят NACK: досылаем пакеты {missing}...")
+                    time.sleep(HALF_DUPLEX_GUARD_SEC)
+
+                    # Досылаем строго недостающие пакеты
+                    for seq in missing:
+                        if self._is_aborted:
+                            return
+                        if seq in chunk_map:
+                            retry_wave = encode_to_audio(
+                                make_data_packet(seq, chunk_map[seq]),
+                                protocol_id=self.protocol_id,
+                                volume=self.volume,
+                            )
+                            if not self._play_samples(retry_wave):
+                                return
+                            time.sleep(INTER_PACKET_GUARD_SEC)
+
+                    # Завершаем досылку пакетом END
+                    if not self._play_samples(end_waveform):
+                        return
+
+                else:
+                    # Таймаут ожидания ответа
+                    if attempt < MAX_NACK_ATTEMPTS:
+                        self.status.emit("Повторный запрос статуса (пакет END)...")
+                        time.sleep(HALF_DUPLEX_GUARD_SEC)
+                        if not self._play_samples(end_waveform):
+                            return
+                    else:
+                        self.status.emit("Все пакеты переданы. Проверьте статус на втором ноутбуке.")
+                        self.progress.emit(100)
+                        self.success.emit()
+                        return
 
         except Exception as exc:
             self.error.emit(f"Ошибка передачи файла: {exc}")
@@ -227,24 +273,6 @@ class AudioReceiverThread(QThread):
             sd.stop()
         except Exception:
             pass
-
-    def _send_ack(self, stream: sd.InputStream, decoder: AudioPacketDecoder, seq: int):
-        """Transmits an ACK packet with proper room-echo delays and buffer draining."""
-        time.sleep(RECEIVER_PRE_ACK_DELAY_SEC)
-        ack_audio = encode_to_audio(
-            make_ack_packet(seq),
-            protocol_id=self.protocol_id,
-            volume=max(80, self.volume),
-        )
-        sd.play(ack_audio, samplerate=SAMPLE_RATE)
-        sd.wait()
-        time.sleep(RECEIVER_POST_ACK_GUARD_SEC)
-        try:
-            while stream.read_available > 0:
-                stream.read(min(stream.read_available, BLOCK_SIZE))
-        except Exception:
-            pass
-        decoder.reset()
 
     def run(self):
         stream = None
@@ -294,38 +322,37 @@ class AudioReceiverThread(QThread):
                 if ptype == "START":
                     file_meta = pkt
                     total_chunks = pkt["total_chunks"]
-                    received_chunks.clear()
-
                     self.status.emit(f"Входящий: {pkt['filename']} ({pkt['orig_size']} Б, {total_chunks} пак.)...")
-                    self.progress.emit(0)
-
-                    self._send_ack(stream, decoder, 0)
+                    self.progress.emit(5)
 
                 # DATA packet
                 elif ptype == "DATA":
                     seq = pkt["seq"]
-                    if seq not in received_chunks:
-                        received_chunks[seq] = pkt["data"]
-                        percent = int((len(received_chunks) / max(1, total_chunks + 1)) * 100)
-                        self.progress.emit(percent)
-                        self.status.emit(f"Принят пакет {seq}/{total_chunks}...")
+                    received_chunks[seq] = pkt["data"]
+                    percent = min(85, int((len(received_chunks) / max(1, total_chunks)) * 85))
+                    self.progress.emit(percent)
+                    self.status.emit(f"Принят пакет {seq}/{total_chunks} (получено: {len(received_chunks)})...")
 
-                    self._send_ack(stream, decoder, seq)
-
-                # END packet
+                # END packet: отправитель закончил раунд и ждёт наш вердикт
                 elif ptype == "END":
-                    self._send_ack(stream, decoder, total_chunks + 1)
+                    if total_chunks == 0:
+                        continue
 
-                    if len(received_chunks) >= total_chunks:
+                    # Пауза тишины (Half-Duplex Guard): ждём, чтобы комната затихла,
+                    # а отправитель гарантированно закончил воспроизведение и включил микрофон
+                    time.sleep(HALF_DUPLEX_GUARD_SEC)
+
+                    missing = [i for i in range(1, total_chunks + 1) if i not in received_chunks]
+
+                    if not missing:
+                        # Все пакеты собраны без потерь
                         raw_payload = b"".join(received_chunks[i] for i in range(1, total_chunks + 1))
                         file_data = decompress_data(raw_payload, file_meta.get("is_comp", False))
 
-                        # Verify CRC32
                         if zlib.crc32(file_data) == file_meta.get("file_crc32"):
                             clean_name = Path(file_meta.get("filename", "file.bin")).name
                             save_path = target_dir / clean_name
 
-                            # Avoid overwriting
                             if save_path.exists():
                                 stem, suffix = save_path.stem, save_path.suffix
                                 counter = 1
@@ -334,19 +361,57 @@ class AudioReceiverThread(QThread):
                                     counter += 1
 
                             save_path.write_bytes(file_data)
+
                             if self._is_running:
                                 self.progress.emit(100)
-                                self.status.emit(f"Файл сохранён: {save_path.name}")
+                                self.status.emit(f"Файл сохранён: {save_path.name}! Отправка подтверждения...")
+
+                            # Останавливаем запись и громко один раз пищим ACK:DONE
+                            try:
+                                stream.stop()
+                            except Exception:
+                                pass
+
+                            done_audio = encode_to_audio(make_done_packet(), protocol_id=self.protocol_id, volume=100)
+                            sd.play(done_audio, samplerate=SAMPLE_RATE)
+                            sd.wait()
+
+                            if self._is_running:
+                                self.status.emit(f"Успешно сохранён: {save_path.name}")
                                 self.received.emit(str(save_path.resolve()))
                             return
                         else:
                             if self._is_running:
                                 self.error.emit("Ошибка CRC32 файла: не совпала контрольная сумма.")
                             return
+                    else:
+                        # Не хватает одного или нескольких пакетов — отправляем NACK
+                        if self._is_running:
+                            self.status.emit(f"Пропущено {len(missing)} пак. Запрос досылки: {missing[:5]}...")
+
+                        try:
+                            stream.stop()
+                        except Exception:
+                            pass
+
+                        nack_audio = encode_to_audio(make_nack_packet(missing), protocol_id=self.protocol_id, volume=100)
+                        sd.play(nack_audio, samplerate=SAMPLE_RATE)
+                        sd.wait()
+
+                        # Возобновляем прослушивание для приёма досылаемых пакетов
+                        if self._is_running:
+                            time.sleep(0.1)
+                            try:
+                                stream.start()
+                                while stream.read_available > 0:
+                                    stream.read(min(stream.read_available, BLOCK_SIZE))
+                            except Exception:
+                                pass
+                            decoder.reset()
 
         except Exception as exc:
             if self._is_running:
-                self.error.emit(f"Ошибка микрофона: {exc}")
+                self.error.emit(f"Ошибка приёма: {exc}")
         finally:
             if stream is not None:
                 try:

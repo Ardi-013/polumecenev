@@ -1,6 +1,6 @@
 [project]
 name = "lab1"
-version = "0.3.0"
+version = "0.4.0"
 description = "Лабораторная работа 1. Связь двух компьютеров"
 readme = "README.md"
 authors = [
