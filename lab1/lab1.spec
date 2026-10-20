@@ -3,7 +3,8 @@ from pathlib import Path
 
 block_cipher = None
 
-datas = []
+icon_file = 'src/lab1/ui/icon.ico'
+datas = [(icon_file, '.')]
 
 a = Analysis(
     ['src/lab1/main.py'],
@@ -48,6 +49,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon=icon_file,
 )
 
 coll = COLLECT(

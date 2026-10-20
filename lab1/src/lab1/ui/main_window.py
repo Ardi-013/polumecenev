@@ -1,11 +1,14 @@
+import ctypes
 import os
 import subprocess
+import sys
 from pathlib import Path
 from typing import Optional
 
 from PySide6.QtCore import Qt, QUrl
-from PySide6.QtGui import QCloseEvent, QDesktopServices, QPixmap
+from PySide6.QtGui import QCloseEvent, QDesktopServices, QIcon, QPixmap
 from PySide6.QtWidgets import (
+    QApplication,
     QFileDialog,
     QHBoxLayout,
     QLabel,
@@ -19,6 +22,24 @@ from PySide6.QtWidgets import (
 from lab1.audio.workers import AudioReceiverThread, AudioSenderThread
 from lab1.core.protocol import CHUNK_PAYLOAD_SIZE, compress_data
 
+if sys.platform == "win32":
+    ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("lab1.audio.FileSoundApp.1")
+
+
+def get_icon_path() -> str:
+    if hasattr(sys, "_MEIPASS"):
+        exe_icon = Path(sys._MEIPASS) / "icon.ico"
+        if exe_icon.exists():
+            return str(exe_icon)
+
+    current = Path(__file__).resolve()
+    for parent in [current.parent, *current.parents]:
+        candidate = parent / "icon.ico"
+        if candidate.exists():
+            return str(candidate)
+
+    return str(Path.cwd() / "icon.ico")
+
 
 class MainWindow(QMainWindow):
 
@@ -26,6 +47,15 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("Лабораторная 1")
         self.resize(540, 420)
+
+        icon_path = get_icon_path()
+        if Path(icon_path).exists():
+            app_icon = QIcon(icon_path)
+            self.setWindowIcon(app_icon)
+            app = QApplication.instance()
+            if app is not None:
+                app.setWindowIcon(app_icon)
+
         self.current_image_path: Optional[str] = None
         self.current_role: Optional[str] = None
         self.is_sending: bool = False
@@ -43,74 +73,73 @@ class MainWindow(QMainWindow):
         if self.current_theme == "purple":
             self.setStyleSheet("""
                 QMainWindow {
-                    background-color: #120e1e;
+                    background-color: #161324;
                 }
                 QLabel {
-                    color: #ede7f6;
+                    color: #e2dcf0;
                     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
                 }
                 QPushButton {
-                    background-color: #2e1f47;
-                    color: #f3e8ff;
-                    border: 1px solid #5b3e8c;
+                    background-color: #26203a;
+                    color: #dcd3f0;
+                    border: 1px solid #453a66;
                     border-radius: 9px;
                     font-size: 13px;
                     font-weight: 600;
                     padding: 4px 10px;
                 }
                 QPushButton:hover {
-                    background-color: #432c69;
-                    border-color: #8b5cf6;
-                    color: #ffffff;
+                    background-color: #322a4d;
+                    border-color: #6c5b9e;
+                    color: #f2eefc;
                 }
                 QPushButton:pressed {
-                    background-color: #201435;
+                    background-color: #1d182e;
                 }
                 QProgressBar {
-                    background-color: #231738;
+                    background-color: #241e38;
                     border: none;
-                    border-radius: 2px;
+                    border-radius: 3px;
                 }
                 QProgressBar::chunk {
-                    background-color: #a855f7;
-                    border-radius: 2px;
+                    background-color: #8c7ab8;
+                    border-radius: 3px;
                 }
             """)
         else:
             self.setStyleSheet("""
                 QMainWindow {
-                    background-color: #fff1f5;
+                    background-color: #fdf6f8;
                 }
                 QLabel {
-                    color: #4c1d36;
+                    color: #5c3a47;
                     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
                 }
                 QPushButton {
-                    background-color: #fce7f3;
-                    color: #831843;
-                    border: 1px solid #f472b6;
+                    background-color: #f9e8ee;
+                    color: #6e4455;
+                    border: 1px solid #e6c5d0;
                     border-radius: 9px;
                     font-size: 13px;
                     font-weight: 600;
                     padding: 4px 10px;
                 }
                 QPushButton:hover {
-                    background-color: #fbcfe8;
-                    border-color: #ec4899;
-                    color: #701a75;
+                    background-color: #f3d8e2;
+                    border-color: #d9adb9;
+                    color: #52303e;
                 }
                 QPushButton:pressed {
-                    background-color: #f472b6;
-                    color: #ffffff;
+                    background-color: #e8c6d2;
                 }
                 QProgressBar {
-                    background-color: #fbcfe8;
+                    background-color: #f2dce4;
                     border: none;
-                    border-radius: 2px;
+                    border-radius: 3px;
                 }
                 QProgressBar::chunk {
-                    background-color: #ec4899;
-                    border-radius: 2px;
+                    background-color: #d996a8;
+                    border-radius: 3px;
                 }
             """)
 
@@ -118,41 +147,49 @@ class MainWindow(QMainWindow):
         if self.current_theme == "purple":
             button.setStyleSheet("""
                 QPushButton {
-                    background-color: #6d28d9;
-                    border: 1px solid #8b5cf6;
-                    color: #ffffff;
+                    background-color: #5b4b8a;
+                    border: 1px solid #7866ad;
+                    color: #f4f0ff;
                 }
                 QPushButton:hover {
-                    background-color: #7c3aed;
+                    background-color: #6c5a9e;
+                    border-color: #8e7cc2;
+                }
+                QPushButton:pressed {
+                    background-color: #493b70;
                 }
             """)
         else:
             button.setStyleSheet("""
                 QPushButton {
-                    background-color: #ec4899;
-                    border: 1px solid #f43f5e;
-                    color: #ffffff;
+                    background-color: #eab8c6;
+                    border: 1px solid #dca1b2;
+                    color: #522d3b;
                 }
                 QPushButton:hover {
-                    background-color: #db2777;
+                    background-color: #e2a5b6;
+                    border-color: #cf8e9f;
+                }
+                QPushButton:pressed {
+                    background-color: #d495a7;
                 }
             """)
 
     def style_image_frame(self, label: QLabel):
         if self.current_theme == "purple":
             label.setStyleSheet("""
-                border: 2px dashed #5b3e8c;
+                border: 2px dashed #4a3e6d;
                 border-radius: 12px;
-                background-color: #1a142b;
-                color: #9d8db8;
+                background-color: #1e1930;
+                color: #9689b3;
                 font-size: 13px;
             """)
         else:
             label.setStyleSheet("""
-                border: 2px dashed #f472b6;
+                border: 2px dashed #e2bcc8;
                 border-radius: 12px;
                 background-color: #ffffff;
-                color: #9d4c6c;
+                color: #9e7584;
                 font-size: 13px;
             """)
 
@@ -284,7 +321,7 @@ class MainWindow(QMainWindow):
         h_layout.addWidget(self.send_spinner)
         h_layout.addStretch()
 
-        title_color = "#ede7f6" if self.current_theme == "purple" else "#4c1d36"
+        title_color = "#e2dcf0" if self.current_theme == "purple" else "#5c3a47"
         self.send_label = QLabel("Подготовка к отправке...")
         self.send_label.setStyleSheet(f"font-size: 15px; font-weight: bold; color: {title_color};")
         self.send_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -334,7 +371,7 @@ class MainWindow(QMainWindow):
         h_layout.addWidget(self.receive_spinner)
         h_layout.addStretch()
 
-        title_color = "#ede7f6" if self.current_theme == "purple" else "#4c1d36"
+        title_color = "#e2dcf0" if self.current_theme == "purple" else "#5c3a47"
         self.receive_label = QLabel("Ожидаем сигнал...")
         self.receive_label.setStyleSheet(f"font-size: 15px; font-weight: bold; color: {title_color};")
         self.receive_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -371,7 +408,7 @@ class MainWindow(QMainWindow):
         central = self.create_page_central()
         layout = self.create_layout(central)
 
-        title_color = "#c4b5fd" if self.current_theme == "purple" else "#db2777"
+        title_color = "#b8a8e0" if self.current_theme == "purple" else "#a85c74"
         if self.current_role == "sender":
             title_text = "Файл успешно отправлен!"
             action_verb = "Отправлен"
@@ -404,7 +441,7 @@ class MainWindow(QMainWindow):
                         Qt.TransformationMode.SmoothTransformation,
                     )
                 )
-                info_color = "#ede7f6" if self.current_theme == "purple" else "#4c1d36"
+                info_color = "#e2dcf0" if self.current_theme == "purple" else "#5c3a47"
                 info_label = QLabel(f"{p.name} ({size_bytes} байт)")
                 info_label.setStyleSheet(f"font-size: 13px; color: {info_color};")
                 info_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
