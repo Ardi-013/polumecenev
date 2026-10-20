@@ -8,7 +8,7 @@ SAMPLE_RATE = 48000
 BLOCK_SIZE = 1024
 SAMPLES_PER_FRAME = 512
 CHUNK_PAYLOAD_SIZE = 52
-DEFAULT_PROTOCOL_ID = 2
+DEFAULT_PROTOCOL_ID = 1  # 1: Fast (быстрый режим: ~6 сек на файл с хорошим запасом помехоустойчивости)
 
 try:
     ggwave.disableLog()
@@ -123,7 +123,7 @@ class AudioPacketDecoder:
 
     def __init__(
         self,
-        marker_threshold: float = 1.0,
+        marker_threshold: float = 1.5,
         samples_per_frame: int = SAMPLES_PER_FRAME,
     ):
         self.marker_threshold = marker_threshold

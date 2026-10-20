@@ -32,7 +32,7 @@ class AudioSenderThread(QThread):
     def __init__(
         self,
         file_path: str,
-        volume: int = 70,
+        volume: int = 80,
         protocol_id: int = DEFAULT_PROTOCOL_ID,
         parent=None,
     ):
@@ -62,48 +62,39 @@ class AudioSenderThread(QThread):
         sd.wait()
         return not self._is_aborted
 
-    def _wait_for_ack(self, expected_seq: int, timeout_sec: float = 2.8) -> bool:
+    def _wait_for_ack(
+        self,
+        stream: sd.InputStream,
+        decoder: AudioPacketDecoder,
+        expected_seq: int,
+        timeout_sec: float = 3.0,
+    ) -> bool:
         """Listens for an ACK packet matching expected_seq within timeout."""
         if self._is_aborted:
             return False
 
-        decoder = AudioPacketDecoder()
-        stream = None
-        start_time = time.time()
-        ack_found = False
-
+        # Drain any residual samples recorded during playback/guard interval
         try:
-            stream = sd.InputStream(
-                samplerate=SAMPLE_RATE,
-                channels=1,
-                dtype="float32",
-                blocksize=BLOCK_SIZE,
-            )
-            stream.start()
+            while stream.read_available > 0:
+                stream.read(min(stream.read_available, BLOCK_SIZE))
+        except Exception:
+            pass
+        decoder.reset()
 
-            while not self._is_aborted and (time.time() - start_time) < timeout_sec:
+        start_time = time.time()
+        while not self._is_aborted and (time.time() - start_time) < timeout_sec:
+            try:
                 data, _ = stream.read(BLOCK_SIZE)
-                if self._is_aborted:
-                    break
+            except Exception:
+                break
+            if self._is_aborted:
+                return False
 
-                pkt = decoder.decode_chunk(data[:, 0])
-                if pkt and pkt.get("type") == "ACK" and pkt.get("seq") == expected_seq:
-                    ack_found = True
-                    break
+            pkt = decoder.decode_chunk(data[:, 0])
+            if pkt and pkt.get("type") == "ACK" and pkt.get("seq") == expected_seq:
+                return True
 
-        except Exception as exc:
-            if not self._is_aborted:
-                self.error.emit(f"Ошибка микрофона при ожидании ACK: {exc}")
-        finally:
-            if stream is not None:
-                try:
-                    stream.stop()
-                    stream.close()
-                except Exception:
-                    pass
-            decoder.close()
-
-        return ack_found
+        return False
 
     def run(self):
         try:
@@ -145,48 +136,73 @@ class AudioSenderThread(QThread):
             packets.append((total_chunks + 1, make_end_packet(total_chunks), "завершения"))
 
             total_packets = len(packets)
-            max_retries = 6
+            max_retries = 8
 
-            for pkt_idx, (seq, pkt_bytes, label) in enumerate(packets):
-                if self._is_aborted:
-                    self.status.emit("Передача отменена.")
-                    return
+            stream = None
+            decoder = None
+            try:
+                stream = sd.InputStream(
+                    samplerate=SAMPLE_RATE,
+                    channels=1,
+                    dtype="float32",
+                    blocksize=BLOCK_SIZE,
+                )
+                stream.start()
+                decoder = AudioPacketDecoder()
 
-                waveform = encode_to_audio(pkt_bytes, protocol_id=self.protocol_id, volume=self.volume)
-                delivered = False
-
-                for attempt in range(1, max_retries + 1):
+                for pkt_idx, (seq, pkt_bytes, label) in enumerate(packets):
                     if self._is_aborted:
+                        self.status.emit("Передача отменена.")
                         return
 
-                    if attempt == 1:
-                        if seq == 0:
-                            self.status.emit(f"Передача заголовка ({comp_summary}, {total_chunks} пак.)...")
+                    waveform = encode_to_audio(pkt_bytes, protocol_id=self.protocol_id, volume=self.volume)
+                    delivered = False
+
+                    for attempt in range(1, max_retries + 1):
+                        if self._is_aborted:
+                            return
+
+                        if attempt == 1:
+                            if seq == 0:
+                                self.status.emit(f"Передача заголовка ({comp_summary}, {total_chunks} пак.)...")
+                            else:
+                                self.status.emit(f"Передача {label}...")
                         else:
-                            self.status.emit(f"Передача {label}...")
-                    else:
-                        self.status.emit(f"Шум: повтор {label} (попытка {attempt}/{max_retries})...")
+                            self.status.emit(f"Шум: повтор {label} (попытка {attempt}/{max_retries})...")
 
-                    if not self._play_samples(waveform):
+                        if not self._play_samples(waveform):
+                            return
+
+                        # Guard interval against room reverberation
+                        time.sleep(0.08)
+
+                        if self._wait_for_ack(stream, decoder, seq, timeout_sec=3.0):
+                            delivered = True
+                            break
+
+                    if not delivered:
+                        self.error.emit(f"Не удалось получить подтверждение для {label}. Проверьте микрофон.")
                         return
 
-                    # Guard interval against room reverberation
-                    time.sleep(0.15)
+                    self.progress.emit(min(100, int(((pkt_idx + 1) / total_packets) * 100)))
 
-                    if self._wait_for_ack(seq, timeout_sec=2.8):
-                        delivered = True
-                        break
+                if not self._is_aborted:
+                    self.status.emit("Файл успешно передан!")
+                    self.progress.emit(100)
+                    self.success.emit()
 
-                if not delivered:
-                    self.error.emit(f"Не удалось получить подтверждение для {label}. Проверьте микрофон.")
-                    return
-
-                self.progress.emit(min(100, int(((pkt_idx + 1) / total_packets) * 100)))
-
-            if not self._is_aborted:
-                self.status.emit("Файл успешно передан!")
-                self.progress.emit(100)
-                self.success.emit()
+            finally:
+                if stream is not None:
+                    try:
+                        stream.stop()
+                        stream.close()
+                    except Exception:
+                        pass
+                if decoder is not None:
+                    try:
+                        decoder.close()
+                    except Exception:
+                        pass
 
         except Exception as exc:
             self.error.emit(f"Ошибка передачи файла: {exc}")
@@ -198,9 +214,17 @@ class AudioReceiverThread(QThread):
     received = Signal(str)
     error = Signal(str)
 
-    def __init__(self, save_dir: Optional[str] = None, parent=None):
+    def __init__(
+        self,
+        save_dir: Optional[str] = None,
+        volume: int = 80,
+        protocol_id: int = DEFAULT_PROTOCOL_ID,
+        parent=None,
+    ):
         super().__init__(parent)
         self.save_dir = save_dir
+        self.volume = volume
+        self.protocol_id = protocol_id
         self._is_running = True
 
     def stop(self):
@@ -263,11 +287,18 @@ class AudioReceiverThread(QThread):
                     self.status.emit(f"Входящий: {pkt['filename']} ({pkt['orig_size']} Б, {total_chunks} пак.)...")
                     self.progress.emit(0)
 
+                    # Give sender time to transition to listening and let room echo dissipate
+                    time.sleep(0.10)
                     # Send ACK(0)
-                    ack_audio = encode_to_audio(make_ack_packet(0), volume=70)
+                    ack_audio = encode_to_audio(make_ack_packet(0), protocol_id=self.protocol_id, volume=self.volume)
                     sd.play(ack_audio, samplerate=SAMPLE_RATE)
                     sd.wait()
-                    time.sleep(0.15)
+                    time.sleep(0.08)
+                    try:
+                        while stream.read_available > 0:
+                            stream.read(min(stream.read_available, BLOCK_SIZE))
+                    except Exception:
+                        pass
                     decoder.reset()
 
                 # DATA packet
@@ -279,17 +310,25 @@ class AudioReceiverThread(QThread):
                         self.progress.emit(percent)
                         self.status.emit(f"Принят пакет {seq}/{total_chunks}...")
 
+                    # Give sender time to transition to listening and let room echo dissipate
+                    time.sleep(0.10)
                     # Send ACK(seq)
-                    ack_audio = encode_to_audio(make_ack_packet(seq), volume=70)
+                    ack_audio = encode_to_audio(make_ack_packet(seq), protocol_id=self.protocol_id, volume=self.volume)
                     sd.play(ack_audio, samplerate=SAMPLE_RATE)
                     sd.wait()
-                    time.sleep(0.15)
+                    time.sleep(0.08)
+                    try:
+                        while stream.read_available > 0:
+                            stream.read(min(stream.read_available, BLOCK_SIZE))
+                    except Exception:
+                        pass
                     decoder.reset()
 
                 # END packet
                 elif ptype == "END":
+                    time.sleep(0.10)
                     # Send ACK(total_chunks + 1)
-                    ack_audio = encode_to_audio(make_ack_packet(total_chunks + 1), volume=70)
+                    ack_audio = encode_to_audio(make_ack_packet(total_chunks + 1), protocol_id=self.protocol_id, volume=self.volume)
                     sd.play(ack_audio, samplerate=SAMPLE_RATE)
                     sd.wait()
 
