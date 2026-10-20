@@ -8,10 +8,19 @@ import sounddevice as sd
 from PySide6.QtCore import QThread, Signal
 
 from lab1.core.protocol import (
+    ACK_TIMEOUT_SEC,
+    AUDIO_POLL_INTERVAL_SEC,
     BLOCK_SIZE,
     CHUNK_PAYLOAD_SIZE,
     DEFAULT_PROTOCOL_ID,
+    DEFAULT_VOLUME,
+    MAX_PACKET_RETRIES,
+    RECEIVER_IDLE_DOTS_INTERVAL_TICKS,
+    RECEIVER_IDLE_DOTS_MAX_COUNT,
+    RECEIVER_POST_ACK_GUARD_SEC,
+    RECEIVER_PRE_ACK_DELAY_SEC,
     SAMPLE_RATE,
+    SENDER_POST_PLAY_GUARD_SEC,
     AudioPacketDecoder,
     compress_data,
     decompress_data,
@@ -32,7 +41,7 @@ class AudioSenderThread(QThread):
     def __init__(
         self,
         file_path: str,
-        volume: int = 80,
+        volume: int = DEFAULT_VOLUME,
         protocol_id: int = DEFAULT_PROTOCOL_ID,
         parent=None,
     ):
@@ -58,7 +67,7 @@ class AudioSenderThread(QThread):
             if self._is_aborted:
                 sd.stop()
                 return False
-            time.sleep(0.04)
+            time.sleep(AUDIO_POLL_INTERVAL_SEC)
         sd.wait()
         return not self._is_aborted
 
@@ -67,7 +76,7 @@ class AudioSenderThread(QThread):
         stream: sd.InputStream,
         decoder: AudioPacketDecoder,
         expected_seq: int,
-        timeout_sec: float = 3.0,
+        timeout_sec: float = ACK_TIMEOUT_SEC,
     ) -> bool:
         """Listens for an ACK packet matching expected_seq within timeout."""
         if self._is_aborted:
@@ -136,7 +145,7 @@ class AudioSenderThread(QThread):
             packets.append((total_chunks + 1, make_end_packet(total_chunks), "завершения"))
 
             total_packets = len(packets)
-            max_retries = 8
+            max_retries = MAX_PACKET_RETRIES
 
             stream = None
             decoder = None
@@ -174,9 +183,9 @@ class AudioSenderThread(QThread):
                             return
 
                         # Guard interval against room reverberation
-                        time.sleep(0.08)
+                        time.sleep(SENDER_POST_PLAY_GUARD_SEC)
 
-                        if self._wait_for_ack(stream, decoder, seq, timeout_sec=3.0):
+                        if self._wait_for_ack(stream, decoder, seq, timeout_sec=ACK_TIMEOUT_SEC):
                             delivered = True
                             break
 
@@ -217,7 +226,7 @@ class AudioReceiverThread(QThread):
     def __init__(
         self,
         save_dir: Optional[str] = None,
-        volume: int = 80,
+        volume: int = DEFAULT_VOLUME,
         protocol_id: int = DEFAULT_PROTOCOL_ID,
         parent=None,
     ):
@@ -233,6 +242,24 @@ class AudioReceiverThread(QThread):
             sd.stop()
         except Exception:
             pass
+
+    def _send_ack(self, stream: sd.InputStream, decoder: AudioPacketDecoder, seq: int):
+        """Transmits an ACK packet with proper room-echo delays and buffer draining."""
+        time.sleep(RECEIVER_PRE_ACK_DELAY_SEC)
+        ack_audio = encode_to_audio(
+            make_ack_packet(seq),
+            protocol_id=self.protocol_id,
+            volume=self.volume,
+        )
+        sd.play(ack_audio, samplerate=SAMPLE_RATE)
+        sd.wait()
+        time.sleep(RECEIVER_POST_ACK_GUARD_SEC)
+        try:
+            while stream.read_available > 0:
+                stream.read(min(stream.read_available, BLOCK_SIZE))
+        except Exception:
+            pass
+        decoder.reset()
 
     def run(self):
         stream = None
@@ -268,8 +295,8 @@ class AudioReceiverThread(QThread):
 
                 if not file_meta:
                     idle_ticks += 1
-                    if idle_ticks % 30 == 0:
-                        dots = "." * ((idle_ticks // 30) % 4)
+                    if idle_ticks % RECEIVER_IDLE_DOTS_INTERVAL_TICKS == 0:
+                        dots = "." * ((idle_ticks // RECEIVER_IDLE_DOTS_INTERVAL_TICKS) % RECEIVER_IDLE_DOTS_MAX_COUNT)
                         self.status.emit(f"Слушаем эфир через микрофон{dots}")
 
                 pkt = decoder.decode_chunk(data[:, 0])
@@ -287,19 +314,7 @@ class AudioReceiverThread(QThread):
                     self.status.emit(f"Входящий: {pkt['filename']} ({pkt['orig_size']} Б, {total_chunks} пак.)...")
                     self.progress.emit(0)
 
-                    # Give sender time to transition to listening and let room echo dissipate
-                    time.sleep(0.10)
-                    # Send ACK(0)
-                    ack_audio = encode_to_audio(make_ack_packet(0), protocol_id=self.protocol_id, volume=self.volume)
-                    sd.play(ack_audio, samplerate=SAMPLE_RATE)
-                    sd.wait()
-                    time.sleep(0.08)
-                    try:
-                        while stream.read_available > 0:
-                            stream.read(min(stream.read_available, BLOCK_SIZE))
-                    except Exception:
-                        pass
-                    decoder.reset()
+                    self._send_ack(stream, decoder, 0)
 
                 # DATA packet
                 elif ptype == "DATA":
@@ -310,27 +325,11 @@ class AudioReceiverThread(QThread):
                         self.progress.emit(percent)
                         self.status.emit(f"Принят пакет {seq}/{total_chunks}...")
 
-                    # Give sender time to transition to listening and let room echo dissipate
-                    time.sleep(0.10)
-                    # Send ACK(seq)
-                    ack_audio = encode_to_audio(make_ack_packet(seq), protocol_id=self.protocol_id, volume=self.volume)
-                    sd.play(ack_audio, samplerate=SAMPLE_RATE)
-                    sd.wait()
-                    time.sleep(0.08)
-                    try:
-                        while stream.read_available > 0:
-                            stream.read(min(stream.read_available, BLOCK_SIZE))
-                    except Exception:
-                        pass
-                    decoder.reset()
+                    self._send_ack(stream, decoder, seq)
 
                 # END packet
                 elif ptype == "END":
-                    time.sleep(0.10)
-                    # Send ACK(total_chunks + 1)
-                    ack_audio = encode_to_audio(make_ack_packet(total_chunks + 1), protocol_id=self.protocol_id, volume=self.volume)
-                    sd.play(ack_audio, samplerate=SAMPLE_RATE)
-                    sd.wait()
+                    self._send_ack(stream, decoder, total_chunks + 1)
 
                     if len(received_chunks) >= total_chunks:
                         raw_payload = b"".join(received_chunks[i] for i in range(1, total_chunks + 1))

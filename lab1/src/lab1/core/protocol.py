@@ -4,11 +4,40 @@ import brotli
 import ggwave
 import numpy as np
 
-SAMPLE_RATE = 48000
-BLOCK_SIZE = 1024
-SAMPLES_PER_FRAME = 512
-CHUNK_PAYLOAD_SIZE = 52
-DEFAULT_PROTOCOL_ID = 1  # 1: Fast (быстрый режим: ~6 сек на файл с хорошим запасом помехоустойчивости)
+# ==============================================================================
+# Акустические и модемные параметры (Physical & Audio Layer)
+# ==============================================================================
+SAMPLE_RATE: int = 48000
+BLOCK_SIZE: int = 1024
+SAMPLES_PER_FRAME: int = 512
+CHUNK_PAYLOAD_SIZE: int = 52
+DEFAULT_PROTOCOL_ID: int = 1  # 1: Fast (быстрый режим: ~6 сек на файл с хорошим запасом)
+DEFAULT_VOLUME: int = 80
+DEFAULT_MARKER_THRESHOLD: float = 1.5
+
+# ==============================================================================
+# Сетевой протокол Stop-and-Wait ARQ и тайминги (Data Link / Transport Layer)
+# ==============================================================================
+MAX_PACKET_RETRIES: int = 8
+ACK_TIMEOUT_SEC: float = 3.0
+SENDER_POST_PLAY_GUARD_SEC: float = 0.08
+RECEIVER_PRE_ACK_DELAY_SEC: float = 0.10
+RECEIVER_POST_ACK_GUARD_SEC: float = 0.08
+AUDIO_POLL_INTERVAL_SEC: float = 0.04
+
+# ==============================================================================
+# Сжатие и форматирование пакетов (Application / Framing Layer)
+# ==============================================================================
+BROTLI_COMPRESSION_QUALITY: int = 11
+MAX_FILENAME_LENGTH: int = 40
+MIN_PACKET_LENGTH: int = 5
+START_PACKET_PARTS_COUNT: int = 6
+
+# ==============================================================================
+# Сервисные константы интерфейса
+# ==============================================================================
+RECEIVER_IDLE_DOTS_INTERVAL_TICKS: int = 30
+RECEIVER_IDLE_DOTS_MAX_COUNT: int = 4
 
 try:
     ggwave.disableLog()
@@ -19,7 +48,7 @@ except Exception:
 def compress_data(data: bytes) -> Tuple[bytes, bool]:
     """Compresses data using Brotli with static dictionary, or returns raw bytes."""
     try:
-        compressed = brotli.compress(data, quality=11)
+        compressed = brotli.compress(data, quality=BROTLI_COMPRESSION_QUALITY)
         if len(compressed) < len(data):
             return compressed, True
     except Exception:
@@ -44,48 +73,51 @@ def decompress_data(data: bytes, is_compressed: bool) -> bytes:
 # END:total
 
 def make_start_packet(total_chunks: int, orig_size: int, is_comp: bool, file_crc32: int, filename: str) -> bytes:
-    clean_fn = filename.replace(":", "_")[:40]
+    clean_fn = filename.replace(":", "_")[:MAX_FILENAME_LENGTH]
     return f"START:{total_chunks}:{orig_size}:{1 if is_comp else 0}:{file_crc32}:{clean_fn}".encode("utf-8")
 
 
 def make_data_packet(seq: int, chunk: bytes) -> bytes:
-    return f"DATA:{seq:04d}:".encode("ascii") + chunk
+    return f"DATA:{seq}:".encode("ascii") + chunk
 
 
 def make_ack_packet(seq: int) -> bytes:
-    return f"ACK:{seq:04d}".encode("ascii")
+    return f"ACK:{seq}".encode("ascii")
 
 
 def make_end_packet(total_chunks: int) -> bytes:
-    return f"END:{total_chunks:04d}".encode("ascii")
+    return f"END:{total_chunks}".encode("ascii")
 
 
 def parse_packet(raw: Optional[bytes]) -> Optional[Dict[str, Any]]:
     """Unpacks any ggwave binary/text packet."""
-    if not raw or len(raw) < 7:
+    if not raw or len(raw) < MIN_PACKET_LENGTH:
         return None
     if raw.startswith(b"DATA:"):
         try:
-            seq = int(raw[5:9])
-            return {"type": "DATA", "seq": seq, "data": raw[10:]}
+            parts = raw.split(b":", 2)
+            seq = int(parts[1])
+            return {"type": "DATA", "seq": seq, "data": parts[2]}
         except Exception:
             return None
     elif raw.startswith(b"ACK:"):
         try:
-            seq = int(raw[4:8])
+            parts = raw.split(b":", 1)
+            seq = int(parts[1])
             return {"type": "ACK", "seq": seq}
         except Exception:
             return None
     elif raw.startswith(b"END:"):
         try:
-            total = int(raw[4:8])
+            parts = raw.split(b":", 1)
+            total = int(parts[1])
             return {"type": "END", "total_chunks": total}
         except Exception:
             return None
     elif raw.startswith(b"START:"):
         try:
             parts = raw.decode("utf-8", errors="replace").split(":", 5)
-            if len(parts) == 6:
+            if len(parts) == START_PACKET_PARTS_COUNT:
                 return {
                     "type": "START",
                     "total_chunks": int(parts[1]),
@@ -102,7 +134,7 @@ def parse_packet(raw: Optional[bytes]) -> Optional[Dict[str, Any]]:
 def encode_to_audio(
     payload: bytes,
     protocol_id: int = DEFAULT_PROTOCOL_ID,
-    volume: int = 50,
+    volume: int = DEFAULT_VOLUME,
     samples_per_frame: int = SAMPLES_PER_FRAME,
 ) -> np.ndarray:
     """Encodes bytes into float32 audio samples using configured ggwave parameters."""
@@ -123,7 +155,7 @@ class AudioPacketDecoder:
 
     def __init__(
         self,
-        marker_threshold: float = 1.5,
+        marker_threshold: float = DEFAULT_MARKER_THRESHOLD,
         samples_per_frame: int = SAMPLES_PER_FRAME,
     ):
         self.marker_threshold = marker_threshold

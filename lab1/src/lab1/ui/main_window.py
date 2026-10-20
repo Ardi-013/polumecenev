@@ -22,6 +22,8 @@ from PySide6.QtWidgets import (
 from lab1.audio.workers import AudioReceiverThread, AudioSenderThread
 from lab1.core.protocol import CHUNK_PAYLOAD_SIZE, compress_data
 
+THREAD_WAIT_TIMEOUT_MS: int = 1000
+
 if sys.platform == "win32":
     ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("lab1.audio.FileSoundApp.1")
 
@@ -46,7 +48,8 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Лабораторная 1")
-        self.resize(540, 420)
+        self.resize(560, 430)
+        self.setMinimumSize(520, 400)
 
         icon_path = get_icon_path()
         if Path(icon_path).exists():
@@ -183,6 +186,7 @@ class MainWindow(QMainWindow):
                 background-color: #1e1930;
                 color: #9689b3;
                 font-size: 13px;
+                padding: 8px;
             """)
         else:
             label.setStyleSheet("""
@@ -191,6 +195,7 @@ class MainWindow(QMainWindow):
                 background-color: #ffffff;
                 color: #9e7584;
                 font-size: 13px;
+                padding: 8px;
             """)
 
     def closeEvent(self, event: QCloseEvent):
@@ -217,7 +222,7 @@ class MainWindow(QMainWindow):
                 pass
             if self.sender_thread.isRunning():
                 self.sender_thread.abort()
-                self.sender_thread.wait(1000)
+                self.sender_thread.wait(THREAD_WAIT_TIMEOUT_MS)
             self.sender_thread = None
 
         if self.receiver_thread:
@@ -239,7 +244,7 @@ class MainWindow(QMainWindow):
                 pass
             if self.receiver_thread.isRunning():
                 self.receiver_thread.stop()
-                self.receiver_thread.wait(1000)
+                self.receiver_thread.wait(THREAD_WAIT_TIMEOUT_MS)
             self.receiver_thread = None
 
     def main_page(self):
@@ -266,7 +271,7 @@ class MainWindow(QMainWindow):
         layout = self.create_layout(central, horizontal=True)
 
         image = QLabel("Файл")
-        image.setFixedSize(180, 180)
+        image.setFixedSize(200, 200)
         image.setAlignment(Qt.AlignmentFlag.AlignCenter)
         image.setWordWrap(True)
         self.style_image_frame(image)
@@ -281,7 +286,7 @@ class MainWindow(QMainWindow):
             if not pixmap.isNull():
                 image.setPixmap(
                     pixmap.scaled(
-                        180, 180,
+                        200, 200,
                         Qt.AspectRatioMode.KeepAspectRatio,
                         Qt.TransformationMode.SmoothTransformation,
                     )
@@ -323,9 +328,11 @@ class MainWindow(QMainWindow):
 
         title_color = "#e2dcf0" if self.current_theme == "purple" else "#5c3a47"
         self.send_label = QLabel("Подготовка к отправке...")
-        self.send_label.setStyleSheet(f"font-size: 15px; font-weight: bold; color: {title_color};")
+        self.send_label.setStyleSheet(f"font-size: 14px; font-weight: 600; color: {title_color};")
         self.send_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.send_label.setWordWrap(True)
+        self.send_label.setFixedWidth(480)
+        self.send_label.setMinimumHeight(60)
 
         self.send_abort = self.create_button("Отмена", self._on_click)
 
@@ -373,9 +380,11 @@ class MainWindow(QMainWindow):
 
         title_color = "#e2dcf0" if self.current_theme == "purple" else "#5c3a47"
         self.receive_label = QLabel("Ожидаем сигнал...")
-        self.receive_label.setStyleSheet(f"font-size: 15px; font-weight: bold; color: {title_color};")
+        self.receive_label.setStyleSheet(f"font-size: 14px; font-weight: 600; color: {title_color};")
         self.receive_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.receive_label.setWordWrap(True)
+        self.receive_label.setFixedWidth(480)
+        self.receive_label.setMinimumHeight(60)
 
         self.receive_cancel = self.create_button("Назад", self._on_click)
 
@@ -423,7 +432,7 @@ class MainWindow(QMainWindow):
         label.setStyleSheet(f"font-size: 18px; font-weight: bold; color: {title_color};")
 
         finish_image = QLabel("Файл")
-        finish_image.setFixedSize(180, 180)
+        finish_image.setFixedSize(200, 200)
         finish_image.setAlignment(Qt.AlignmentFlag.AlignCenter)
         finish_image.setWordWrap(True)
         self.style_image_frame(finish_image)
@@ -436,7 +445,7 @@ class MainWindow(QMainWindow):
             if not pixmap.isNull():
                 finish_image.setPixmap(
                     pixmap.scaled(
-                        180, 180,
+                        200, 200,
                         Qt.AspectRatioMode.KeepAspectRatio,
                         Qt.TransformationMode.SmoothTransformation,
                     )
@@ -445,6 +454,8 @@ class MainWindow(QMainWindow):
                 info_label = QLabel(f"{p.name} ({size_bytes} байт)")
                 info_label.setStyleSheet(f"font-size: 13px; color: {info_color};")
                 info_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                info_label.setWordWrap(True)
+                info_label.setFixedWidth(480)
             else:
                 finish_image.setText(f"{action_verb}:\n{p.name}\n\n{size_bytes} байт")
 
