@@ -82,14 +82,6 @@ class AudioSenderThread(QThread):
         if self._is_aborted:
             return False
 
-        # Drain any residual samples recorded during playback/guard interval
-        try:
-            while stream.read_available > 0:
-                stream.read(min(stream.read_available, BLOCK_SIZE))
-        except Exception:
-            pass
-        decoder.reset()
-
         start_time = time.time()
         while not self._is_aborted and (time.time() - start_time) < timeout_sec:
             try:
@@ -182,9 +174,16 @@ class AudioSenderThread(QThread):
                         if not self._play_samples(waveform):
                             return
 
-                        # Guard interval against room reverberation
+                        # Brief pause to let speaker sound decay, then flush self-recorded audio
                         time.sleep(SENDER_POST_PLAY_GUARD_SEC)
+                        try:
+                            while stream.read_available > 0:
+                                stream.read(min(stream.read_available, BLOCK_SIZE))
+                        except Exception:
+                            pass
+                        decoder.reset()
 
+                        # Receiver waits 0.35s before playing ACK, so sender is 100% ready and listening
                         if self._wait_for_ack(stream, decoder, seq, timeout_sec=ACK_TIMEOUT_SEC):
                             delivered = True
                             break
@@ -249,7 +248,7 @@ class AudioReceiverThread(QThread):
         ack_audio = encode_to_audio(
             make_ack_packet(seq),
             protocol_id=self.protocol_id,
-            volume=self.volume,
+            volume=max(95, self.volume),
         )
         sd.play(ack_audio, samplerate=SAMPLE_RATE)
         sd.wait()
