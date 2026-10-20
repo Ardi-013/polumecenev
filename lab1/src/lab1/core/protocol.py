@@ -12,17 +12,16 @@ BLOCK_SIZE: int = 1024
 SAMPLES_PER_FRAME: int = 512
 CHUNK_PAYLOAD_SIZE: int = 52
 DEFAULT_PROTOCOL_ID: int = 1  # 1: Fast (быстрый режим: ~6 сек на файл с хорошим запасом)
-DEFAULT_VOLUME: int = 95
+DEFAULT_VOLUME: int = 75
 DEFAULT_MARKER_THRESHOLD: float = 1.0
 
 # ==============================================================================
 # Сетевой протокол Stop-and-Wait ARQ и тайминги (Data Link / Transport Layer)
 # ==============================================================================
 MAX_PACKET_RETRIES: int = 8
-ACK_TIMEOUT_SEC: float = 3.5
-SENDER_POST_PLAY_GUARD_SEC: float = 0.05
-RECEIVER_PRE_ACK_DELAY_SEC: float = 0.35
-RECEIVER_POST_ACK_GUARD_SEC: float = 0.08
+ACK_TIMEOUT_SEC: float = 3.0
+RECEIVER_PRE_ACK_DELAY_SEC: float = 0.20
+RECEIVER_POST_ACK_GUARD_SEC: float = 0.10
 AUDIO_POLL_INTERVAL_SEC: float = 0.04
 
 # ==============================================================================
